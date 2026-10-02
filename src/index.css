@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Global input, textarea, and select text colors to ensure visibility */
+input, textarea, select {
+  color: #111827;
+}
+
+.dark input, .dark textarea, .dark select,
+html.dark input, html.dark textarea, html.dark select {
+  color: #f3f4f6;
+  background-color: #1f2937;
+}
+
+/* Ensure focused inputs in dark mode always have a dark background */
+html.dark input:focus, html.dark textarea:focus, html.dark select:focus,
+.dark input:focus, .dark textarea:focus, .dark select:focus {
+  background-color: #0f172a;
+  color: #f3f4f6;
+}
+
