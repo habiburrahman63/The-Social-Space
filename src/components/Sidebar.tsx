@@ -64,8 +64,7 @@ export default function Sidebar({ currentUser, currentView, onNavigate, unreadMe
           return (
             <button
               key={item.id}
-              onClick={() => onNavigate(item.id)}
-              onDoubleClick={item.id === 'feed' ? () => onNavigate('feed', undefined, true) : undefined}
+              onClick={() => onNavigate(item.id, undefined, item.id === 'feed')}
               className={`flex w-full items-center justify-between rounded-xl p-2.5 text-left text-sm font-medium transition-all cursor-pointer ${
                 isActive
                   ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400'

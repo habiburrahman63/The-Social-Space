@@ -43,3 +43,8 @@ export function useScrollRestoration() {
     window.scrollTo(0, remembered ?? 0);
   }, [location.pathname]);
 }
+
+export function resetScrollPosition(pathname = '/') {
+  scrollPositions.set(pathname, 0);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}

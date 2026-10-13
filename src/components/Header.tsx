@@ -134,10 +134,9 @@ export default function Header({
         {/* Left section: Logo & Search (Top Row on mobile) */}
         <div className="flex items-center gap-2.5 w-full lg:w-auto lg:flex-1 max-w-none lg:max-w-md shrink-0">
           <div
-            onClick={() => onNavigate('feed')}
-            onDoubleClick={() => onNavigate('feed', undefined, true)}
+            onClick={() => onNavigate('feed', undefined, true)}
             className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-all duration-150 active:scale-95 shrink-0"
-            title="SocialSpace Home (double-click to refresh)"
+            title="SocialSpace Home (click to refresh feed)"
           >
             <span className="text-xl font-extrabold tracking-tighter select-none">S</span>
           </div>
@@ -213,14 +212,13 @@ export default function Header({
         {/* Middle section: Desktop Quick View Icons */}
         <div className="hidden lg:flex items-center gap-1.5">
           <button
-            onClick={() => onNavigate('feed')}
-            onDoubleClick={() => onNavigate('feed', undefined, true)}
+            onClick={() => onNavigate('feed', undefined, true)}
             className={`relative flex h-14 px-6 items-center justify-center border-b-2 transition-all cursor-pointer ${
               activeTab === 'feed'
                 ? 'text-blue-600 border-blue-600 font-semibold dark:text-blue-400 dark:border-blue-400'
                 : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800/40'
             }`}
-            title="Home (double-click to refresh)"
+            title="Home (click to refresh feed)"
           >
             <span className="text-sm">Home</span>
             {homeUnread > 0 && (
@@ -289,14 +287,13 @@ export default function Header({
 
           {/* Mobile/Tablet Home Button */}
           <button
-            onClick={() => onNavigate('feed')}
-            onDoubleClick={() => onNavigate('feed', undefined, true)}
+            onClick={() => onNavigate('feed', undefined, true)}
             className={`relative flex lg:hidden h-9 w-9 items-center justify-center rounded-full transition-all cursor-pointer active:scale-90 ${
               activeTab === 'feed'
                 ? 'bg-blue-100 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400 font-medium'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
             }`}
-            title="Home (double-click to refresh)"
+            title="Home (click to refresh feed)"
           >
             <Home className="h-4.5 w-4.5" />
             {homeUnread > 0 && (

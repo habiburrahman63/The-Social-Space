@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Smile, MapPin, Users, Calendar, BarChart2, MoreHorizontal, MessageCircle, Share2, Pin, Trash2, Edit3, MessageSquareOff, Plus,
-  Image as ImageIcon, Heart, Star, Send, ChevronRight, X, User as UserIcon, Shield, Lock, Globe, Flag, Eye
+  Image as ImageIcon, Heart, Star, Send, ChevronRight, X, User as UserIcon, Shield, Lock, Globe, Flag, Eye, RefreshCw
 } from 'lucide-react';
 import { Post, User, Story, Comment, Reply, ReactionType } from '../types';
 import { api } from '../utils/api';
@@ -155,16 +155,32 @@ export default function Feed({ currentUser, onNavigate }: FeedProps) {
 
   // Toast Notification
   const [toastMessage, setToastMessage] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const feedContainerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch initial posts and stories
-  const fetchFeedData = async () => {
+  const postsRef = useRef(posts);
+  postsRef.current = posts;
+
+  const triggerToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(''), 3000);
+  }, []);
+
+  // A post can live in either the paginated feed or the own-posts list
+  // (drafts / scheduled), so every in-place update has to touch both.
+  const patchPost = useCallback((postId: string, patch: Partial<Post>) => {
+    setPosts(prev => prev.map(p => (p.id === postId ? { ...p, ...patch } : p)));
+    setMySpecialPosts(prev => prev.map(p => (p.id === postId ? { ...p, ...patch } : p)));
+  }, []);
+
+  // Fetch initial posts and stories (or refresh)
+  const fetchFeedData = useCallback(async (isManualRefresh = false) => {
     try {
-      // Only show the blocking loading state on a genuinely first load.
-      // When we already have a cached snapshot to show (returning to Home
-      // from another page), this runs as a silent background refresh so
-      // the user isn't staring at a spinner over content they can already
-      // see.
-      if (!getFeedSnapshot()) setLoading(true);
+      if (isManualRefresh) {
+        setIsRefreshing(true);
+      } else if (!getFeedSnapshot()) {
+        setLoading(true);
+      }
 
       // All three are independent, so fetch them together.
       // `includeComments=0` keeps every comment on the page out of the feed
@@ -183,11 +199,16 @@ export default function Feed({ currentUser, onNavigate }: FeedProps) {
       setHasMore(!!postsRes.hasMore);
       setStories(nextStories);
       setFeedSnapshot(nextPosts, nextStories);
+
+      if (isManualRefresh) {
+        triggerToast('Feed updated with latest posts!');
+      }
     } catch (_) {
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
-  };
+  }, [triggerToast]);
 
   // Load the next page of the feed. Posts are de-duplicated by id so a post
   // that shifts between pages (e.g. a newly pinned post) can't appear twice.
@@ -216,21 +237,6 @@ export default function Feed({ currentUser, onNavigate }: FeedProps) {
     }
   };
 
-  const postsRef = useRef(posts);
-  postsRef.current = posts;
-
-  const triggerToast = useCallback((msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(''), 3000);
-  }, []);
-
-  // A post can live in either the paginated feed or the own-posts list
-  // (drafts / scheduled), so every in-place update has to touch both.
-  const patchPost = useCallback((postId: string, patch: Partial<Post>) => {
-    setPosts(prev => prev.map(p => (p.id === postId ? { ...p, ...patch } : p)));
-    setMySpecialPosts(prev => prev.map(p => (p.id === postId ? { ...p, ...patch } : p)));
-  }, []);
-
   // Open/close a post's comment tray, fetching its comments on first open so
   // the feed itself never has to carry every comment on the page.
   const handleToggleComments = useCallback(async (postId: string) => {
@@ -257,7 +263,17 @@ export default function Feed({ currentUser, onNavigate }: FeedProps) {
 
   useEffect(() => {
     fetchFeedData();
-  }, []);
+
+    const handleRefreshFeed = () => {
+      feedContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setActiveFilter('all');
+      fetchFeedData(true);
+    };
+
+    window.addEventListener('refresh-feed', handleRefreshFeed);
+    return () => window.removeEventListener('refresh-feed', handleRefreshFeed);
+  }, [fetchFeedData]);
 
   // Create Story Dialog Trigger
   const handleCreateStory = () => {
@@ -508,7 +524,15 @@ export default function Feed({ currentUser, onNavigate }: FeedProps) {
   const scheduledCount = mySpecialPosts.filter(p => !!p.scheduledTime).length;
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6 md:px-6 max-w-2xl mx-auto space-y-6">
+    <div ref={feedContainerRef} className="flex-1 overflow-y-auto px-4 py-6 md:px-6 max-w-2xl mx-auto space-y-6">
+      {/* Dynamic Refreshing Indicator */}
+      {isRefreshing && (
+        <div className="flex items-center justify-center gap-2.5 py-2 px-4 rounded-full bg-blue-50 dark:bg-blue-950/70 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 text-xs font-semibold shadow-md animate-in slide-in-from-top-3 duration-300 mx-auto w-fit">
+          <RefreshCw className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />
+          <span>Refreshing feed & checking for new posts...</span>
+        </div>
+      )}
+
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-5 left-5 z-50 rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white shadow-xl dark:bg-white dark:text-gray-900 animate-bounce">

@@ -41,7 +41,7 @@ import { User, Notification } from './types';
 import { api } from './utils/api';
 import { countUnreadInSection, HOME_NOTIFICATION_TYPES, FRIENDS_NOTIFICATION_TYPES } from './utils/notificationSections';
 import { pathForView, viewForPath } from './utils/routes';
-import { useScrollRestoration } from './hooks/useScrollRestoration';
+import { useScrollRestoration, resetScrollPosition } from './hooks/useScrollRestoration';
 import { Shield, Users, Mail, Lock, ChevronRight, Sparkles, MessageSquare, Eye, EyeOff, CheckCircle, AlertTriangle, XCircle, Info, X, KeyRound, ArrowLeft, RefreshCw } from 'lucide-react';
 
 export default function App() {
@@ -497,13 +497,15 @@ export default function App() {
   // Feed to fetch genuinely fresh data (see feedRefreshKey below).
   const handleNavigate = useCallback((view: string, targetId?: string, forceRefresh?: boolean) => {
     const nextPath = pathForView(view, targetId);
-    // Navigating to the exact page you're already on (e.g. clicking "Home"
-    // while already on Home) replaces the history entry instead of pushing
-    // a new one, so Back doesn't get stuck re-visiting the same page.
-    navigate(nextPath, { replace: nextPath === location.pathname });
+    const isCurrent = nextPath === location.pathname;
 
-    if (view === 'feed' && forceRefresh) {
-      setFeedRefreshKey(k => k + 1);
+    navigate(nextPath, { replace: isCurrent });
+
+    if (view === 'feed') {
+      resetScrollPosition('/');
+      if (forceRefresh || isCurrent) {
+        window.dispatchEvent(new CustomEvent('refresh-feed'));
+      }
     }
 
     if (view !== 'messenger') {
