@@ -157,6 +157,7 @@ export default function Feed({ currentUser, onNavigate }: FeedProps) {
   const [toastMessage, setToastMessage] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const feedContainerRef = useRef<HTMLDivElement>(null);
+  const refreshCountRef = useRef(0);
 
   const postsRef = useRef(posts);
   postsRef.current = posts;
@@ -173,51 +174,127 @@ export default function Feed({ currentUser, onNavigate }: FeedProps) {
     setMySpecialPosts(prev => prev.map(p => (p.id === postId ? { ...p, ...patch } : p)));
   }, []);
 
-  // Fetch initial posts and stories (or refresh)
+  // Fetch initial posts and stories (or smart refresh)
   const fetchFeedData = useCallback(async (isManualRefresh = false) => {
     try {
       if (isManualRefresh) {
         setIsRefreshing(true);
+        refreshCountRef.current += 1;
       } else if (!getFeedSnapshot()) {
         setLoading(true);
+      }
+
+      let postsUrl = `/api/posts?page=1&limit=${FEED_PAGE_SIZE}&includeComments=0`;
+      if (isManualRefresh) {
+        const currentPosts = postsRef.current;
+        const newestUnpinned = currentPosts.find(p => !p.isPinned);
+        const sinceParam = newestUnpinned?.createdAt ? `&since=${encodeURIComponent(newestUnpinned.createdAt)}` : '';
+        const seenIdsParam = currentPosts.length > 0
+          ? `&seenIds=${encodeURIComponent(currentPosts.slice(0, 50).map(p => p.id).join(','))}`
+          : '';
+        postsUrl += `&refresh=1&rotateOffset=${refreshCountRef.current}${sinceParam}${seenIdsParam}`;
       }
 
       // All three are independent, so fetch them together.
       // `includeComments=0` keeps every comment on the page out of the feed
       // payload - a post's comments are only fetched when its tray is opened.
       const [postsRes, storiesRes, ownRes] = await Promise.all([
-        api.get(`/api/posts?page=1&limit=${FEED_PAGE_SIZE}&includeComments=0`),
+        api.get(postsUrl),
         api.get('/api/stories'),
         api.get('/api/posts?scope=own&limit=100&includeComments=0'),
       ]);
 
-      const nextPosts = ((postsRes.posts || []) as Post[]).map((p) => ({ ...p, commentsLoaded: false }));
+      const incomingPosts = ((postsRes.posts || []) as Post[]).map((p) => ({ ...p, commentsLoaded: false }));
       const nextStories = storiesRes.stories || [];
-      setPosts(nextPosts);
-      setMySpecialPosts(((ownRes.posts || []) as Post[]).map((p) => ({ ...p, commentsLoaded: false })));
-      setPage(1);
-      setHasMore(!!postsRes.hasMore);
-      setStories(nextStories);
-      setFeedSnapshot(nextPosts, nextStories);
 
       if (isManualRefresh) {
-        triggerToast('Feed updated with latest posts!');
+        const newCount = postsRes.newCount || 0;
+        const rotatedCount = postsRes.rotatedCount || 0;
+        const isCirculated = !!postsRes.isCirculated;
+
+        setPosts(prev => {
+          // Identify pinned posts from incoming and existing
+          const incomingPinned = incomingPosts.filter(p => p.isPinned);
+          const existingPinned = prev.filter(p => p.isPinned && !incomingPosts.some(inc => inc.id === p.id));
+          const uniquePinned = Array.from(new Map([...incomingPinned, ...existingPinned].map(p => [p.id, p])).values());
+
+          if (newCount > 0) {
+            // Case 1: Brand new posts found! Place them right below pinned posts
+            const newUnpinned = incomingPosts.filter(p => !p.isPinned);
+            const remainingPrev = prev.filter(p => !p.isPinned && !newUnpinned.some(inc => inc.id === p.id));
+            const merged = [...uniquePinned, ...newUnpinned, ...remainingPrev];
+            setFeedSnapshot(merged, nextStories);
+            return merged;
+          }
+
+          // Case 2: No new posts - check for unseen older posts that were fetched
+          const unseenOlder = incomingPosts.filter(p => !p.isPinned && !prev.some(old => old.id === p.id));
+          if (unseenOlder.length > 0) {
+            // Unseen older posts surfaced to the top!
+            // Previously loaded posts are preserved below them without losing them
+            const remainingPrev = prev.filter(p => !p.isPinned);
+            const merged = [...uniquePinned, ...unseenOlder, ...remainingPrev];
+            setFeedSnapshot(merged, nextStories);
+            return merged;
+          }
+
+          // Case 3: All posts in the database were already in feed
+          // Rotate existing posts so bottom older posts float up to the top!
+          const unpinnedPrev = prev.filter(p => !p.isPinned);
+          if (unpinnedPrev.length > 1) {
+            const shiftCount = Math.max(1, Math.min(3, Math.floor(unpinnedPrev.length / 2)));
+            const rotated = [
+              ...unpinnedPrev.slice(-shiftCount),
+              ...unpinnedPrev.slice(0, -shiftCount)
+            ];
+            const merged = [...uniquePinned, ...rotated];
+            setFeedSnapshot(merged, nextStories);
+            return merged;
+          }
+
+          const fallback = [...uniquePinned, ...incomingPosts.filter(p => !p.isPinned)];
+          setFeedSnapshot(fallback, nextStories);
+          return fallback;
+        });
+
+        // User feedback toast
+        if (newCount > 0) {
+          triggerToast(`✨ ${newCount} new post${newCount > 1 ? 's' : ''} added to your feed!`);
+        } else if (rotatedCount > 0 && !isCirculated) {
+          triggerToast(`🔄 Feed refreshed: surfaced earlier posts you haven't seen!`);
+        } else {
+          triggerToast(`🔄 Feed refreshed with earlier posts!`);
+        }
+
+        setPage(1);
+        setHasMore(!!postsRes.hasMore);
+      } else {
+        setPosts(incomingPosts);
+        setPage(1);
+        setHasMore(!!postsRes.hasMore);
+        setFeedSnapshot(incomingPosts, nextStories);
       }
+
+      setMySpecialPosts(((ownRes.posts || []) as Post[]).map((p) => ({ ...p, commentsLoaded: false })));
+      setStories(nextStories);
     } catch (_) {
+      if (isManualRefresh) {
+        triggerToast('Could not refresh feed. Check your connection.');
+      }
     } finally {
       setLoading(false);
       setIsRefreshing(false);
     }
   }, [triggerToast]);
 
-  // Load the next page of the feed. Posts are de-duplicated by id so a post
-  // that shifts between pages (e.g. a newly pinned post) can't appear twice.
+  // Load the next page of the feed with seenIds deduplication
   const handleLoadMore = async () => {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
       const nextPage = page + 1;
-      const res = await api.get(`/api/posts?page=${nextPage}&limit=${FEED_PAGE_SIZE}&includeComments=0`);
+      const seenIds = postsRef.current.map(p => p.id).join(',');
+      const res = await api.get(`/api/posts?page=${nextPage}&limit=${FEED_PAGE_SIZE}&includeComments=0&seenIds=${encodeURIComponent(seenIds)}`);
       const incoming = (res.posts || []) as Post[];
       setPosts(prev => {
         const seen = new Set(prev.map((p) => p.id));
@@ -922,9 +999,25 @@ export default function Feed({ currentUser, onNavigate }: FeedProps) {
             Scheduled ({scheduledCount})
           </button>
         </div>
-        <span className="text-[10px] font-semibold text-gray-400">
-          Showing {filteredPosts.length} posts
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setActiveFilter('all');
+              feedContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+              fetchFeedData(true);
+            }}
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/30 transition cursor-pointer disabled:opacity-60"
+            title="Refresh feed"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+          <span className="text-[10px] font-semibold text-gray-400">
+            Showing {filteredPosts.length} posts
+          </span>
+        </div>
       </div>
 
       {/* 4. POST FEED LIST */}
