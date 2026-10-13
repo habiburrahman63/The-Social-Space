@@ -204,7 +204,18 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
           api.get(`/api/messages/${selectedFriend.id}`),
           api.get(`/api/messages/typing/${selectedFriend.id}`),
         ]);
-        setMessages(res?.messages || []);
+        const newMsgs = (res?.messages || []) as Message[];
+        setMessages(prev => {
+          if (prev.length === newMsgs.length) {
+            if (prev.length === 0) return prev;
+            const lastPrev = prev[prev.length - 1];
+            const lastNew = newMsgs[newMsgs.length - 1];
+            if (lastPrev.id === lastNew.id && lastPrev.isRead === lastNew.isRead && lastPrev.text === lastNew.text) {
+              return prev; // Same messages, skip re-render
+            }
+          }
+          return newMsgs;
+        });
         setIsFriendTyping(!!typingRes?.isTyping);
       } catch (_) {
       } finally {

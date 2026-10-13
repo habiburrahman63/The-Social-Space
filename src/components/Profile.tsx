@@ -258,9 +258,14 @@ export default function Profile({
       if (!silent) {
         setLoading(true);
       }
-      // Fetch user profile directly by ID
-      const userRes = await api.get(`/api/users/${profileUserId}`);
-      const foundUser = userRes.user as User;
+      // Parallelize profile, posts, and friend requests fetch to eliminate request waterfall
+      const [userRes, postsRes, reqsRes] = await Promise.all([
+        api.get(`/api/users/${profileUserId}`),
+        api.get(`/api/posts?userId=${profileUserId}`),
+        currentUser.id !== profileUserId ? api.get('/api/friends/requests').catch(() => null) : Promise.resolve(null),
+      ]);
+
+      const foundUser = userRes?.user as User;
 
       if (foundUser) {
         setUser(foundUser);
@@ -289,24 +294,20 @@ export default function Profile({
           setCoverPhoto(foundUser.coverPhoto || '');
         }
 
-        // Fetch user posts if not blocked
+        // Set posts if not blocked
         if (!userRes.isBlockedMutual) {
-          const postsRes = await api.get(`/api/posts?userId=${foundUser.id}`);
-          setPosts(postsRes.posts || []);
+          setPosts(postsRes?.posts || []);
         } else {
           setPosts([]);
         }
 
-        // Fetch friend requests status if viewing another user's profile
-        if (currentUser.id !== profileUserId) {
-          try {
-            const reqsRes = await api.get('/api/friends/requests');
-            const received = (reqsRes.received || []) as Notification[];
-            const sent = (reqsRes.sent || []) as Notification[];
+        // Set friend requests status if viewing another user's profile
+        if (reqsRes) {
+          const received = (reqsRes.received || []) as Notification[];
+          const sent = (reqsRes.sent || []) as Notification[];
 
-            setHasReceivedReq(received.some(r => r.senderId === foundUser.id));
-            setHasSentReq(sent.some(s => s.recipientId === foundUser.id));
-          } catch (_) {}
+          setHasReceivedReq(received.some(r => r.senderId === foundUser.id));
+          setHasSentReq(sent.some(s => s.recipientId === foundUser.id));
         }
       }
     } catch (_) {
