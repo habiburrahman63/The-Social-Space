@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Search, Phone, Video, Send, Smile, ThumbsUp, Trash2, Mic, Paperclip, MoreVertical, ShieldAlert, CheckCheck, Play, Pause, X,
-  PhoneCall, PhoneOff, Volume2, Maximize2, MessageSquare, Home, Plus, ArrowLeft
+  PhoneCall, PhoneOff, Volume2, Maximize2, MessageSquare, Home, Plus, ArrowLeft, RefreshCw
 } from 'lucide-react';
 import { User, Message } from '../types';
 import { api } from '../utils/api';
@@ -57,6 +57,14 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
   const [isFriendTyping, setIsFriendTyping] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
+  // Loading & error states
+  const [contactsLoading, setContactsLoading] = useState(true);
+  const [contactsError, setContactsError] = useState<string | null>(null);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
+  const fetchMessagesRef = useRef<((isInitial?: boolean) => Promise<void>) | null>(null);
+  const fetchContactsRef = useRef<(() => Promise<void>) | null>(null);
+
   // Custom message types
   const [gifUrl, setGifUrl] = useState('');
   const [isRecording, setIsRecording] = useState(false);
@@ -93,9 +101,13 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
 
   // Fetch contacts list with polling to stay in sync when new friends are accepted
   useEffect(() => {
-    const fetchContacts = async () => {
+    const fetchContacts = async (isManual = false) => {
       if (contactsInFlightRef.current) return;
       contactsInFlightRef.current = true;
+      if (isManual) {
+        setContactsLoading(true);
+        setContactsError(null);
+      }
       try {
         const res = await api.get('/api/messages/contacts');
         const contacts = (res?.contacts || []) as User[];
@@ -133,11 +145,18 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
         });
 
         setFriends(combinedList);
-      } catch (_) {
+        setContactsError(null);
+      } catch (err: any) {
+        if (friends.length === 0) {
+          setContactsError('Failed to load contacts. Please check your connection.');
+        }
       } finally {
         contactsInFlightRef.current = false;
+        setContactsLoading(false);
       }
     };
+
+    fetchContactsRef.current = () => fetchContacts(true);
     fetchContacts();
 
     // Refresh the contact list every 8s (was every 2s) and only while the tab
@@ -145,7 +164,7 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
     let interval: ReturnType<typeof setInterval> | null = null;
     const startPolling = () => {
       if (interval) return;
-      interval = setInterval(fetchContacts, 8000);
+      interval = setInterval(() => fetchContacts(false), 8000);
     };
     const stopPolling = () => {
       if (interval) {
@@ -157,7 +176,7 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
       if (document.hidden) {
         stopPolling();
       } else {
-        fetchContacts();
+        fetchContacts(false);
         startPolling();
       }
     };
@@ -192,9 +211,18 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
 
   // Fetch messages and typing status when friend changes
   useEffect(() => {
-    if (!selectedFriend) return;
+    if (!selectedFriend) {
+      setMessages([]);
+      setMessagesLoading(false);
+      setMessagesError(null);
+      return;
+    }
 
-    const fetchMessages = async () => {
+    setMessagesLoading(true);
+    setMessagesError(null);
+    setMessages([]); // clear stale conversation messages to avoid flashing wrong friend's chat
+
+    const fetchMessages = async (isInitial = false) => {
       if (messagesInFlightRef.current) return;
       messagesInFlightRef.current = true;
       try {
@@ -217,20 +245,27 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
           return newMsgs;
         });
         setIsFriendTyping(!!typingRes?.isTyping);
-      } catch (_) {
+        setMessagesError(null);
+      } catch (err: any) {
+        if (isInitial) {
+          setMessagesError(err?.message || 'Failed to load conversation. Please check your connection.');
+        }
       } finally {
         messagesInFlightRef.current = false;
+        if (isInitial) {
+          setMessagesLoading(false);
+        }
       }
     };
-    fetchMessages();
 
-    // Poll for chat updates + typing status every 4s (was every 1.5s) and
-    // pause while the tab is hidden - the previous 1.5s interval re-fetched
-    // the entire conversation constantly.
+    fetchMessagesRef.current = fetchMessages;
+    fetchMessages(true);
+
+    // Poll for chat updates + typing status every 4s and pause while the tab is hidden
     let interval: ReturnType<typeof setInterval> | null = null;
     const startPolling = () => {
       if (interval) return;
-      interval = setInterval(fetchMessages, 4000);
+      interval = setInterval(() => fetchMessages(false), 4000);
     };
     const stopPolling = () => {
       if (interval) {
@@ -242,7 +277,7 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
       if (document.hidden) {
         stopPolling();
       } else {
-        fetchMessages();
+        fetchMessages(false);
         startPolling();
       }
     };
@@ -255,6 +290,13 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
       stopPolling();
     };
   }, [selectedFriend?.id]);
+
+  const handleRetryMessages = () => {
+    if (!selectedFriend) return;
+    setMessagesLoading(true);
+    setMessagesError(null);
+    fetchMessagesRef.current?.(true);
+  };
 
   // Scroll to bottom on message updates
   useEffect(() => {
@@ -500,7 +542,29 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
 
         {/* Dynamic Chats List (Vertical) */}
         <div className="flex-1 overflow-y-auto space-y-0.5 px-2">
-          {filteredFriends.length === 0 ? (
+          {contactsLoading ? (
+            <div className="space-y-2 p-2 animate-in fade-in duration-150">
+              {[1, 2, 3, 4, 5, 6].map(i => (
+                <div key={i} className="flex items-center gap-3 p-2 rounded-xl animate-pulse">
+                  <div className="h-11 w-11 rounded-full bg-gray-200 dark:bg-gray-800 shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 bg-gray-200 dark:bg-gray-800 rounded-sm w-28" />
+                    <div className="h-2.5 bg-gray-100 dark:bg-gray-850 rounded-sm w-40" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : contactsError ? (
+            <div className="py-8 px-4 text-center">
+              <p className="text-xs text-red-500 mb-2 font-medium">{contactsError}</p>
+              <button
+                onClick={() => fetchContactsRef.current?.()}
+                className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 text-xs font-bold hover:bg-blue-100 transition cursor-pointer"
+              >
+                Retry Contacts
+              </button>
+            </div>
+          ) : filteredFriends.length === 0 ? (
             <div className="py-8 text-center text-xs text-gray-500">
               No matching chats found
             </div>
@@ -671,7 +735,61 @@ export default function Messenger({ currentUser, initialTargetUserId, onNavigate
 
             {/* Message logs panel */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3.5 scrollbar-thin">
-              {messages.length === 0 ? (
+              {messagesLoading ? (
+                <div className="flex flex-col justify-end h-full space-y-4 p-2 animate-in fade-in duration-200">
+                  {/* Floating top loading pill */}
+                  <div className="flex items-center justify-center mb-auto pt-2">
+                    <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 text-xs font-medium shadow-xs">
+                      <div className="h-3 w-3 rounded-full border-2 border-blue-600 dark:border-blue-400 border-t-transparent animate-spin" />
+                      <span>Loading messages...</span>
+                    </div>
+                  </div>
+
+                  {/* Message skeleton bubbles */}
+                  <div className="flex items-end gap-2 max-w-[65%]">
+                    <div className="h-7 w-7 rounded-full bg-gray-200 dark:bg-gray-800 animate-pulse shrink-0" />
+                    <div className="space-y-1.5 w-48">
+                      <div className="h-8 rounded-2xl rounded-bl-sm bg-gray-200 dark:bg-gray-800 animate-pulse w-full" />
+                    </div>
+                  </div>
+
+                  <div className="flex items-end gap-2 max-w-[65%] ml-auto flex-row-reverse">
+                    <div className="space-y-1.5 w-40">
+                      <div className="h-8 rounded-2xl rounded-br-sm bg-blue-200/70 dark:bg-blue-900/40 animate-pulse w-full" />
+                    </div>
+                  </div>
+
+                  <div className="flex items-end gap-2 max-w-[65%]">
+                    <div className="h-7 w-7 rounded-full bg-gray-200 dark:bg-gray-800 animate-pulse shrink-0" />
+                    <div className="space-y-1.5 w-60">
+                      <div className="h-12 rounded-2xl rounded-bl-sm bg-gray-200 dark:bg-gray-800 animate-pulse w-full" />
+                    </div>
+                  </div>
+
+                  <div className="flex items-end gap-2 max-w-[65%] ml-auto flex-row-reverse">
+                    <div className="space-y-1.5 w-52">
+                      <div className="h-9 rounded-2xl rounded-br-sm bg-blue-200/70 dark:bg-blue-900/40 animate-pulse w-full" />
+                    </div>
+                  </div>
+                </div>
+              ) : messagesError ? (
+                <div className="flex h-full flex-col items-center justify-center text-center p-8 text-gray-500 animate-in fade-in duration-200">
+                  <div className="h-12 w-12 rounded-full bg-red-50 dark:bg-red-950/40 text-red-500 flex items-center justify-center mb-3">
+                    <ShieldAlert className="h-6 w-6" />
+                  </div>
+                  <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">Unable to load messages</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-xs leading-relaxed">
+                    {messagesError}
+                  </p>
+                  <button
+                    onClick={handleRetryMessages}
+                    className="mt-4 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-xs cursor-pointer active:scale-95 flex items-center gap-2"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>Try Again</span>
+                  </button>
+                </div>
+              ) : messages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center text-center p-8 text-gray-500">
                   <img loading="lazy"
                     src={activeFriend.profilePic || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}

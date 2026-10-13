@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { User, Post, Notification, ReactionType } from '../types';
 import { api } from '../utils/api';
+import PostCard from './PostCard';
 
 interface ProfileProps {
   currentUser: User;
@@ -201,28 +202,60 @@ export default function Profile({
     }
   };
 
+  const patchPost = (postId: string, patch: Partial<Post>) => {
+    setPosts(prev => prev.map(p => (p.id === postId ? { ...p, ...patch } : p)));
+  };
+
   const handleReactToPost = async (postId: string, reaction: ReactionType) => {
     try {
       const res = await api.post(`/api/posts/${postId}/react`, { type: reaction });
-      if (res?.reactions) setPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: res.reactions } : p));
-      setHoveredReactionPostId(null);
+      if (res?.reactions) patchPost(postId, { reactions: res.reactions });
     } catch (_) {}
   };
 
-  const handleSubmitProfileComment = async (postId: string, parentCommentId?: string) => {
-    const text = parentCommentId ? replyInputs[parentCommentId] : commentInputs[postId];
-    if (!text || !text.trim()) return;
+  const handleToggleComments = (postId: string) => {
+    setOpenCommentPostId(prev => (prev === postId ? null : postId));
+  };
 
+  const handleSubmitProfileComment = async (postId: string, parentCommentId?: string, text?: string) => {
+    if (!text || !text.trim()) return;
     try {
       const res = await api.post(`/api/posts/${postId}/comment`, { text, parentCommentId });
-      if (res?.comments) setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments: res.comments } : p));
-
-      if (parentCommentId) {
-        setReplyInputs(prev => ({ ...prev, [parentCommentId]: '' }));
-        setActiveReplyCommentId(null);
-      } else {
-        setCommentInputs(prev => ({ ...prev, [postId]: '' }));
+      if (res?.comments) {
+        patchPost(postId, {
+          comments: res.comments,
+          commentsCount: res.comments.length
+        });
       }
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleTogglePin = async (post: Post) => {
+    try {
+      const res = await api.put(`/api/posts/${post.id}`, { isPinned: !post.isPinned });
+      if (res?.post) patchPost(post.id, { isPinned: res.post.isPinned });
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleToggleCommenting = async (post: Post) => {
+    try {
+      const res = await api.put(`/api/posts/${post.id}`, { commentsDisabled: !post.commentsDisabled });
+      if (res?.post) patchPost(post.id, { commentsDisabled: res.post.commentsDisabled });
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleReportPost = async (postId: string) => {
+    const reason = prompt('Please describe why you are reporting this post:');
+    if (!reason || !reason.trim()) return;
+    try {
+      await api.post('/api/reports', { reportedId: postId, type: 'post', reason });
+      alert('Post has been reported to site administrators.');
     } catch (err: any) {
       alert(err.message);
     }
@@ -231,7 +264,7 @@ export default function Profile({
   const handleVotePollProfile = async (postId: string, optionIdx: number) => {
     try {
       const res = await api.post(`/api/posts/${postId}/poll/vote`, { optionIdx });
-      if (res?.pollOptions) setPosts(prev => prev.map(p => p.id === postId ? { ...p, pollOptions: res.pollOptions } : p));
+      if (res?.pollOptions) patchPost(postId, { pollOptions: res.pollOptions });
     } catch (err: any) {
       alert(err.message);
     }
@@ -239,6 +272,7 @@ export default function Profile({
 
   const handleCopyPostLink = (id: string) => {
     navigator.clipboard.writeText(`${window.location.origin}/post/${id}`);
+    alert('Post link copied to clipboard!');
   };
 
   const handleDeleteProfilePost = async (id: string) => {
@@ -860,269 +894,29 @@ export default function Profile({
 
           <div className="space-y-4">
             {posts.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-gray-200 p-8 text-center text-xs text-gray-400">
-                This user has not published any posts.
+              <div className="rounded-xl border border-dashed border-gray-200 p-8 text-center text-xs text-gray-400 dark:border-gray-800">
+                {isOwnProfile ? "You haven't published any posts yet." : "This user has not published any posts."}
               </div>
             ) : (
-              posts.map(post => {
-                const reactions = post.reactions || {};
-                const hasReacted = reactions[currentUser.id];
-                const totalReactions = Object.values(reactions).length;
-                const isMyPost = post.userId === currentUser.id;
-
-                return (
-                <div
+              posts.map(post => (
+                <PostCard
                   key={post.id}
-                  className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <img loading="lazy"
-                        src={(user.id === currentUser.id ? (currentUser.profilePic || user.profilePic) : user.profilePic) || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
-                        alt={user.username}
-                        referrerPolicy="no-referrer"
-                        className="h-8 w-8 rounded-full object-cover shrink-0"
-                      />
-                      <div>
-                        <h4 className="text-xs font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1">
-                          <span>{user.username}</span>
-                          {user.verifyBadge && <Shield className="h-3 w-3 fill-blue-500 text-white" />}
-                        </h4>
-                        <span className="text-[10px] text-gray-400">
-                          {new Date(post.createdAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </div>
-                    {isMyPost && (
-                      <button
-                        onClick={() => handleDeleteProfilePost(post.id)}
-                        className="rounded-full p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 cursor-pointer dark:hover:bg-red-950/30"
-                        title="Delete post"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-xs text-gray-800 dark:text-gray-200 mt-2 whitespace-pre-line">
-                    {post.text}
-                  </p>
-                  {post.mediaUrls && post.mediaUrls.length > 0 && (
-                    <img loading="lazy"
-                      src={post.mediaUrls[0]}
-                      alt="Attachment"
-                      className="w-full h-auto mt-2 rounded-lg max-h-60 object-contain bg-gray-50 dark:bg-gray-950"
-                    />
-                  )}
-
-                  {/* Poll viewer */}
-                  {post.pollOptions && post.pollOptions.length > 0 && (
-                    <div className="mt-3 space-y-1.5">
-                      {post.pollOptions.map((opt, oIdx) => {
-                        const totalVotes = post.pollOptions!.reduce((acc, c) => acc + (c.votes?.length || 0), 0);
-                        const pct = totalVotes === 0 ? 0 : Math.round(((opt.votes?.length || 0) / totalVotes) * 100);
-                        const voted = opt.votes?.includes(currentUser.id);
-                        return (
-                          <button
-                            key={oIdx}
-                            onClick={() => handleVotePollProfile(post.id, oIdx)}
-                            className="relative w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-gray-100 cursor-pointer dark:border-gray-800 dark:bg-gray-850 dark:text-gray-200"
-                          >
-                            <div
-                              className={`absolute inset-y-0 left-0 ${voted ? 'bg-blue-100 dark:bg-blue-950/40' : 'bg-gray-100 dark:bg-gray-800'}`}
-                              style={{ width: `${pct}%` }}
-                            />
-                            <div className="relative flex items-center justify-between">
-                              <span>{opt.text} {voted && '✓'}</span>
-                              <span className="text-gray-400">{pct}%</span>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Stats Counters */}
-                  <div className="flex items-center justify-between border-b border-gray-100 pb-2.5 pt-3 text-xs text-gray-500 dark:border-gray-800/80 dark:text-gray-400">
-                    <span>
-                      {totalReactions === 0
-                        ? 'Be the first to react'
-                        : `${totalReactions} reaction${totalReactions > 1 ? 's' : ''}`}
-                    </span>
-                    <div className="flex gap-3">
-                      <span>{(post.comments || []).length} comment{(post.comments || []).length !== 1 ? 's' : ''}</span>
-                      <span>0 shares</span>
-                    </div>
-                  </div>
-
-                  {/* Actions Bar */}
-                  <div className="relative flex justify-between py-1 border-b border-gray-100 dark:border-gray-800/80 select-none">
-                    <div
-                      onMouseEnter={() => setHoveredReactionPostId(post.id)}
-                      onMouseLeave={() => setHoveredReactionPostId(null)}
-                      className="relative flex-1"
-                    >
-                      <button
-                        onClick={() => handleReactToPost(post.id, 'like')}
-                        className={`flex w-full h-8 items-center justify-center gap-2 rounded-xl text-xs font-bold transition cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-850 ${
-                          hasReacted ? 'text-[#1877F2]' : 'text-gray-600 dark:text-gray-300'
-                        }`}
-                      >
-                        <span className="text-base">👍</span>
-                        <span className="capitalize">{hasReacted || 'Like'}</span>
-                      </button>
-
-                      {hoveredReactionPostId === post.id && (
-                        <div className="absolute -top-11 left-1/2 z-50 flex -translate-x-1/2 gap-1.5 rounded-full border border-gray-200 bg-white p-1.5 shadow-lg dark:border-gray-800 dark:bg-gray-900 animate-in fade-in zoom-in-95 duration-150">
-                          {(['like', 'love', 'care', 'haha', 'wow', 'sad', 'angry'] as ReactionType[]).map(r => {
-                            const iconMap: Record<ReactionType, string> = {
-                              like: '👍', love: '❤️', care: '🥰', haha: '😆', wow: '😮', sad: '😢', angry: '😡'
-                            };
-                            return (
-                              <button
-                                key={r}
-                                onClick={() => handleReactToPost(post.id, r)}
-                                className="text-xl transition hover:scale-130 active:scale-95 duration-100 cursor-pointer"
-                                title={r}
-                              >
-                                {iconMap[r]}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-
-                    <button
-                      onClick={() => setOpenCommentPostId(openCommentPostId === post.id ? null : post.id)}
-                      className="flex flex-1 h-8 items-center justify-center gap-2 rounded-xl text-xs font-bold text-gray-600 dark:text-gray-300 transition cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-850"
-                    >
-                      <MessageCircle className="h-4 w-4" />
-                      <span>Comment</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleCopyPostLink(post.id)}
-                      className="flex flex-1 h-8 items-center justify-center gap-2 rounded-xl text-xs font-bold text-gray-600 dark:text-gray-300 transition cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-850"
-                    >
-                      <Share2 className="h-4 w-4" />
-                      <span>Share</span>
-                    </button>
-                  </div>
-
-                  {/* Comments Shelf */}
-                  {openCommentPostId === post.id && (
-                    <div className="mt-4 space-y-4 animate-in fade-in duration-200">
-                      <div className="space-y-3.5 max-h-80 overflow-y-auto pr-1">
-                        {(post.comments || []).map((comment) => (
-                          <div key={comment.id} className="space-y-2">
-                            <div className="flex items-start gap-2.5">
-                              <img loading="lazy"
-                                src={(comment.userId === currentUser.id ? (currentUser.profilePic || comment.userAvatar) : comment.userAvatar) || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
-                                alt={comment.username}
-                                referrerPolicy="no-referrer"
-                                className="h-8 w-8 rounded-full object-cover mt-0.5"
-                              />
-                              <div className="flex-1">
-                                <div className="inline-block rounded-2xl bg-gray-100 px-3 py-2 text-xs dark:bg-gray-800 text-gray-900 dark:text-gray-100 max-w-full">
-                                  <span className="font-bold cursor-pointer hover:underline block mb-0.5" onClick={() => onNavigate('profile', comment.userId)}>
-                                    {comment.username}
-                                  </span>
-                                  <span className="whitespace-pre-line leading-relaxed">{comment.text}</span>
-                                </div>
-                                <div className="flex items-center gap-3 text-[10px] text-gray-400 dark:text-gray-500 mt-1 pl-1">
-                                  <button
-                                    onClick={() => setActiveReplyCommentId(activeReplyCommentId === comment.id ? null : comment.id)}
-                                    className="font-bold hover:underline cursor-pointer"
-                                  >
-                                    Reply
-                                  </button>
-                                  <span>•</span>
-                                  <span>
-                                    {new Date(comment.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="pl-10 space-y-2.5">
-                              {comment.replies && comment.replies.map((reply) => (
-                                <div key={reply.id} className="flex items-start gap-2.5">
-                                  <img loading="lazy"
-                                    src={(reply.userId === currentUser.id ? (currentUser.profilePic || reply.userAvatar) : reply.userAvatar) || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
-                                    alt={reply.username}
-                                    referrerPolicy="no-referrer"
-                                    className="h-7 w-7 rounded-full object-cover mt-0.5"
-                                  />
-                                  <div>
-                                    <div className="inline-block rounded-2xl bg-gray-50 px-3 py-2 text-xs dark:bg-gray-850 text-gray-900 dark:text-gray-100">
-                                      <span className="font-bold cursor-pointer hover:underline block mb-0.5" onClick={() => onNavigate('profile', reply.userId)}>
-                                        {reply.username}
-                                      </span>
-                                      <span className="whitespace-pre-line leading-relaxed">{reply.text}</span>
-                                    </div>
-                                    <span className="block text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 pl-1">
-                                      {new Date(reply.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))}
-
-                              {activeReplyCommentId === comment.id && (
-                                <div className="flex items-center gap-2 pt-1 animate-in slide-in-from-top-1 duration-150">
-                                  <input
-                                    type="text"
-                                    placeholder={`Reply to ${comment.username.split(' ')[0]}...`}
-                                    value={replyInputs[comment.id] || ''}
-                                    onChange={(e) => setReplyInputs({ ...replyInputs, [comment.id]: e.target.value })}
-                                    onKeyDown={(e) => { if (e.key === 'Enter') handleSubmitProfileComment(post.id, comment.id); }}
-                                    className="flex-1 rounded-full border border-gray-200 bg-gray-50 px-3.5 py-1.5 text-xs focus:bg-white focus:outline-hidden dark:border-gray-800 dark:bg-gray-900 dark:text-white"
-                                  />
-                                  <button
-                                    onClick={() => handleSubmitProfileComment(post.id, comment.id)}
-                                    className="rounded-full bg-blue-500 p-1.5 text-white hover:bg-blue-600 cursor-pointer"
-                                  >
-                                    <Send className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {post.commentsDisabled ? (
-                        <div className="rounded-xl bg-gray-50 p-3 text-center text-xs font-semibold text-gray-500 dark:bg-gray-950">
-                          🔒 Commenting has been turned off for this post.
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 border-t border-gray-100 pt-3 dark:border-gray-800">
-                          <img loading="lazy"
-                            src={currentUser.profilePic || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
-                            alt={currentUser.username}
-                            referrerPolicy="no-referrer"
-                            className="h-8 w-8 rounded-full object-cover"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Write a comment..."
-                            value={commentInputs[post.id] || ''}
-                            onChange={(e) => setCommentInputs({ ...commentInputs, [post.id]: e.target.value })}
-                            onKeyDown={(e) => { if (e.key === 'Enter') handleSubmitProfileComment(post.id); }}
-                            className="flex-1 rounded-full border border-gray-200 bg-gray-50 px-3.5 py-2 text-xs focus:bg-white focus:outline-hidden dark:border-gray-800 dark:bg-gray-900 dark:text-white"
-                          />
-                          <button
-                            onClick={() => handleSubmitProfileComment(post.id)}
-                            className="rounded-full bg-[#1877F2] p-2 text-white hover:bg-blue-600 cursor-pointer"
-                          >
-                            <Send className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                );
-              })
+                  post={post}
+                  currentUser={currentUser}
+                  onNavigate={onNavigate}
+                  onReact={handleReactToPost}
+                  onToggleComments={handleToggleComments}
+                  onSubmitComment={handleSubmitProfileComment}
+                  onDelete={handleDeleteProfilePost}
+                  onTogglePin={handleTogglePin}
+                  onToggleCommenting={handleToggleCommenting}
+                  onReport={handleReportPost}
+                  onVotePoll={handleVotePollProfile}
+                  onCopyLink={handleCopyPostLink}
+                  isCommentsOpen={openCommentPostId === post.id}
+                  isCommentsLoading={false}
+                />
+              ))
             )}
           </div>
         </div>
